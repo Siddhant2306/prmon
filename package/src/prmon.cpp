@@ -137,6 +137,47 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
   bool wroteFile = false;
   std::vector<pid_t> cpids{};
   int return_code = 0;
+
+  //(initial immediate sample + time-triggered)
+  // Force an immediate first sample to handle short-lived processes.
+  // Without this, very fast jobs may exit before the first interval elapses.
+    iteration++;
+    lastIteration = time(0);
+
+    if (modern_kernel)
+      cpids = prmon::offspring_pids(mpid);
+    else
+      cpids = prmon::pstree_pids(mpid);
+
+    try {
+
+      // Update monitors
+      for (const auto& monitor : monitors)
+        monitor.second->update_stats(cpids);
+
+      // Write to text file
+      currentTime = time(0);
+      file << currentTime;
+
+      for (const auto& monitor : monitors) {
+        for (const auto& stat : monitor.second->get_text_stats())
+          file << "\t" << stat.second;
+      }
+
+      file << std::endl;
+
+      // Update JSON max stats
+      for (const auto& monitor : monitors) {
+        for (const auto& stat : monitor.second->get_json_total_stats()) {
+          json_summary["Max"][(stat.first).c_str()] = stat.second;
+        }
+      }
+
+    } catch (const std::ifstream::failure& e) {
+      spdlog::warn("Initial sampling exception: " + std::string(e.what()) + " (ignored)");
+    }
+
+
   // Scope of 'monitors' ensures safety of bare pointer here
   auto wallclock_monitor_p = static_cast<wallmon*>(monitors["wallmon"].get());
   while (kill(mpid, 0) == 0 && prmon::sigusr1 == false) {
@@ -224,7 +265,7 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
   file.close();
 
   // Cleanup snapshot file
-  if (remove(json_snapshot_file.str().c_str()) != 0 && iteration > 0)
+  if (remove(json_snapshot_file.str().c_str()) != 0 && errno != ENOENT)
     perror("remove fails");
 
   // Write final JSON summary file
@@ -233,7 +274,7 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
   file.close();
 
   // Check that we ran for a reasonable number of iterations
-  if (wallclock_monitor_p->get_wallclock_t() < prmon::mon_value(interval)) {
+  if (wallclock_monitor_p->get_wallclock_t() < prmon::mon_value(interval) && iteration == 0) {
     spdlog::warn(
         "Monitored process finished before the sampling interval elapsed. "
         "Average statistics will be unreliable. "
