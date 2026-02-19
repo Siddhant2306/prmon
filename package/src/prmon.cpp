@@ -141,6 +141,8 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
   //(initial immediate sample + time-triggered)
   // Force an immediate first sample to handle short-lived processes.
   // Without this, very fast jobs may exit before the first interval elapses.
+  if (kill(mpid, 0) == 0)
+  {
     iteration++;
     lastIteration = time(0);
 
@@ -176,8 +178,8 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
     } catch (const std::ifstream::failure& e) {
       spdlog::warn("Initial sampling exception: " + std::string(e.what()) + " (ignored)");
     }
-
-
+  }
+  
   // Scope of 'monitors' ensures safety of bare pointer here
   auto wallclock_monitor_p = static_cast<wallmon*>(monitors["wallmon"].get());
   while (kill(mpid, 0) == 0 && prmon::sigusr1 == false) {
@@ -274,7 +276,7 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
   file.close();
 
   // Check that we ran for a reasonable number of iterations
-  if (wallclock_monitor_p->get_wallclock_t() < prmon::mon_value(interval) && iteration == 0) {
+  if (wallclock_monitor_p->get_wallclock_t() < prmon::mon_value(interval) && iteration <= 1) {
     spdlog::warn(
         "Monitored process finished before the sampling interval elapsed. "
         "Average statistics will be unreliable. "
