@@ -138,55 +138,15 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
   std::vector<pid_t> cpids{};
   int return_code = 0;
 
-  //(initial immediate sample + time-triggered)
-  // Force an immediate first sample to handle short-lived processes.
-  // Without this, very fast jobs may exit before the first interval elapses.
-  if (kill(mpid, 0) == 0)
-  {
-    iteration++;
-    lastIteration = time(0);
-
-    if (modern_kernel)
-      cpids = prmon::offspring_pids(mpid);
-    else
-      cpids = prmon::pstree_pids(mpid);
-
-    try {
-
-      // Update monitors
-      for (const auto& monitor : monitors)
-        monitor.second->update_stats(cpids);
-
-      // Write to text file
-      currentTime = time(0);
-      file << currentTime;
-
-      for (const auto& monitor : monitors) {
-        for (const auto& stat : monitor.second->get_text_stats())
-          file << "\t" << stat.second;
-      }
-
-      file << std::endl;
-
-      // Update JSON max stats
-      for (const auto& monitor : monitors) {
-        for (const auto& stat : monitor.second->get_json_total_stats()) {
-          json_summary["Max"][(stat.first).c_str()] = stat.second;
-        }
-      }
-
-    } catch (const std::ifstream::failure& e) {
-      spdlog::warn("Initial sampling exception: " + std::string(e.what()) + " (ignored)");
-    }
-  }
-  
   // Scope of 'monitors' ensures safety of bare pointer here
+  bool first = true;
   auto wallclock_monitor_p = static_cast<wallmon*>(monitors["wallmon"].get());
   while (kill(mpid, 0) == 0 && prmon::sigusr1 == false) {
-    if (time(0) - lastIteration > interval) {
+    if (first || time(0) - lastIteration > interval){
       iteration++;
       // Reset lastIteration
       lastIteration = time(0);
+      first = false;
 
       if (modern_kernel)
         cpids = prmon::offspring_pids(mpid);
@@ -238,6 +198,7 @@ int ProcessMonitor(const pid_t mpid, const std::string filename,
             }
           }
         }
+        first = false;
 
         // Write JSON realtime summary to a temporary file
         std::ofstream json_out(tmp_json_file.str());
